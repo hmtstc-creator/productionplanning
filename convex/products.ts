@@ -90,26 +90,36 @@ export const bulkUpsert = mutation({
   args: { rows: v.array(v.object(productArgs)) },
   returns: v.object({ inserted: v.number(), updated: v.number() }),
   handler: async (ctx, { rows }) => {
-    let inserted = 0
-    let updated = 0
+    // Aynı kod birden fazla satırda geçerse son satır kazanır (sıralı davranışla aynı),
+    // ve her koda tek bir işlem yapılır ki paralel upsert'ler çakışmasın.
+    const byCode = new Map<string, (typeof rows)[number]>()
     for (const row of rows) {
       const code = row.code.trim()
       if (!code) continue
-      const { name: _n, material: _m, cycleTimeSeconds: _c, ...rest } = row
-      const data = { ...rest, code }
-      const existing = await ctx.db
-        .query('products')
-        .withIndex('by_code', (q) => q.eq('code', code))
-        .unique()
-      if (existing) {
-        await ctx.db.patch(existing._id, data)
-        updated++
-      } else {
-        await ctx.db.insert('products', data)
-        inserted++
-      }
+      byCode.set(code, row)
     }
-    return { inserted, updated }
+
+    const results = await Promise.all(
+      Array.from(byCode.entries()).map(async ([code, row]) => {
+        const { name: _n, material: _m, cycleTimeSeconds: _c, ...rest } = row
+        const data = { ...rest, code }
+        const existing = await ctx.db
+          .query('products')
+          .withIndex('by_code', (q) => q.eq('code', code))
+          .unique()
+        if (existing) {
+          await ctx.db.patch(existing._id, data)
+          return 'updated' as const
+        }
+        await ctx.db.insert('products', data)
+        return 'inserted' as const
+      }),
+    )
+
+    return {
+      inserted: results.filter((r) => r === 'inserted').length,
+      updated: results.filter((r) => r === 'updated').length,
+    }
   },
 })
 
