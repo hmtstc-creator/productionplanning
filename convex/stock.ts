@@ -47,12 +47,12 @@ export const replaceAll = mutation({
   returns: v.object({ count: v.number() }),
   handler: async (ctx, { rows }) => {
     const existing = await ctx.db.query('stock').collect()
-    for (const doc of existing) await ctx.db.delete(doc._id)
+    await Promise.all(existing.map((doc) => ctx.db.delete(doc._id)))
     const now = Date.now()
-    for (const row of rows) {
-      if (!row.material.trim()) continue
-      await ctx.db.insert('stock', { ...row, uploadedAt: now })
-    }
+    const validRows = rows.filter((row) => row.material.trim())
+    await Promise.all(
+      validRows.map((row) => ctx.db.insert('stock', { ...row, uploadedAt: now })),
+    )
     return { count: rows.length }
   },
 })
